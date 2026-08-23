@@ -97,6 +97,10 @@ const FIXTURE_NOTES: Record<string, { isolates: string; note?: string }> = {
 		isolates: 'An export that draws nothing at all, on either of its pages.',
 		note: 'Blank on both sides is a result here, not a gap — the device\'s export carries no vector ink for either page, and neither do we. It reads as the weakest fixture and is closer to the opposite: nothing else in the corpus states outright that a page is empty.',
 	},
+	'textbox-n5-20260016-digest': {
+		isolates: 'Text boxes and a Digest, whose content is raster-only rather than TOTALPATH ink.',
+		note: 'The page DISABLE rectangles identify text-box/Digest pixels that have no vector stroke records. Vector ink remains vectorized around those rectangles while preserving their bitmap content as a raster overlay.',
+	},
 	'erase-partial2': { isolates: 'A page erased by selecting and deleting, which removes the records outright.' },
 };
 

@@ -221,6 +221,11 @@ export interface IPage {
 	RECOGNFILESTATUS: RecognitionStatuses;
 	/** An indicator of device and file orientation */
 	ORIENTATION: string;
+	/** Whether this page contains one or more text boxes. */
+	PAGETEXTBOX?: string;
+	/** Pipe-separated `x,y,width,height` rectangles occupied by raster-only
+	 * page objects such as text boxes and Digests. */
+	DISABLE?: string;
 	/** Parsed elements from recognition */
 	recognitionElements: IRecognitionElement[];
 	/** Parsed paragraphs from recognition */

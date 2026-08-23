@@ -1,4 +1,4 @@
-import { RattaRLEDecoder } from './conversion.js';
+import { IColorPalette, RattaRLEDecoder } from './conversion.js';
 import { ISupernote, IPage, ILayerNames } from './format.js';
 import { parseStrokes, IStroke, IStrokePoint } from './strokes.js';
 
@@ -214,17 +214,96 @@ export function buildVectorInkPrimitives(strokes: IStroke[], styles: StrokeStyle
 	return [...rects, ...highlighters, ...ink];
 }
 
-/** Returns `page` with its ink layers (MAINLAYER, LAYER1-3) cleared so
- * `toImage` rasterizes only the background layer (BGLAYER: template lines,
- * PDF style, etc.) -- used by vector-ink rendering to avoid drawing ink
- * twice once it's been decoded as vector primitives instead. */
-export function withoutInkLayers(page: IPage): IPage {
+/** A rectangle occupied by an object the file stores only in the ink bitmap,
+ * not in TOTALPATH. Coordinates are in the page's native pixel space. */
+export interface RasterInkRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * `DISABLE` is a pipe-separated list of `x,y,width,height` rectangles. On
+ * recent N5 files it marks text boxes and Digests: their pixels are present
+ * in MAINLAYER, but there are no corresponding TOTALPATH records to turn
+ * into vector paths. Keep these regions rasterized when replacing the rest
+ * of a page's ink with vectors.
+ */
+export function parseDisabledInkRects(disable: string | undefined): RasterInkRect[] {
+	if (!disable || disable === 'none') return [];
+	return disable.split('|').flatMap((part) => {
+		if (!part) return [];
+		const [x, y, width, height] = part.split(',').map(Number);
+		return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+			? [{ x, y, width, height }]
+			: [];
+	});
+}
+
+function isInAnyRect(x: number, y: number, rects: RasterInkRect[]): boolean {
+	return rects.some((rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height);
+}
+
+/** Encodes ordinary (non-extended) Ratta RLE runs. Short runs are legal for
+ * every length up to 128 pixels, which is enough here and keeps the masked
+ * bitmap encoder deliberately small. */
+function encodeRattaRuns(colors: Uint8Array): Uint8Array {
+	const encoded: number[] = [];
+	for (let start = 0; start < colors.length; ) {
+		const color = colors[start];
+		let end = start + 1;
+		while (end < colors.length && colors[end] === color && end - start < 128) end++;
+		encoded.push(color, end - start - 1);
+		start = end;
+	}
+	return new Uint8Array(encoded);
+}
+
+/** Returns a Ratta bitmap retaining only pixels inside `rects`. The decoder's
+ * palette translation supplies the reverse RGB-to-code lookup, so this keeps
+ * the source layer's exact rendered colours rather than guessing a palette. */
+function retainRasterInkInRects(
+	bitmapBuffer: Uint8Array | null,
+	rects: RasterInkRect[],
+	pageWidth: number,
+	pageHeight: number,
+): Uint8Array | null {
+	if (!bitmapBuffer || rects.length === 0) return null;
+	const decoder = new RattaRLEDecoder();
+	const pixels = decoder.decode(bitmapBuffer, pageWidth, pageHeight);
+	const colorCodes = new Map<string, number>();
+	for (const [code, packed] of Object.entries(decoder.buildPackedTranslation({} as IColorPalette))) {
+		const rgba = new Uint8Array(new Uint32Array([packed]).buffer);
+		colorCodes.set(rgba.join(','), Number(code));
+	}
+	// The normal transparent background code is always available, even if a
+	// custom palette omitted it from the translation above.
+	const transparentCode = decoder.encodedPalette.background;
+	const colors = new Uint8Array(pageWidth * pageHeight);
+	for (let p = 0, offset = 0; p < colors.length; p++, offset += 4) {
+		if (!isInAnyRect(p % pageWidth, Math.floor(p / pageWidth), rects)) {
+			colors[p] = transparentCode;
+			continue;
+		}
+		colors[p] = colorCodes.get(`${pixels[offset]},${pixels[offset + 1]},${pixels[offset + 2]},${pixels[offset + 3]}`) ?? transparentCode;
+	}
+	return encodeRattaRuns(colors);
+}
+
+/** Returns `page` with vectorizable ink layers cleared. `DISABLE` text-box
+ * and Digest rectangles remain as a compact raster overlay because the file
+ * has no vector representation for their contents. */
+export function withoutInkLayers(page: IPage, pageWidth: number, pageHeight: number): IPage {
+	const rasterInkRects = parseDisabledInkRects(page.DISABLE);
+	const retain = (name: ILayerNames) =>
+		retainRasterInkInRects(page[name].bitmapBuffer, rasterInkRects, pageWidth, pageHeight);
 	return {
 		...page,
-		MAINLAYER: { ...page.MAINLAYER, bitmapBuffer: null },
-		LAYER1: { ...page.LAYER1, bitmapBuffer: null },
-		LAYER2: { ...page.LAYER2, bitmapBuffer: null },
-		LAYER3: { ...page.LAYER3, bitmapBuffer: null },
+		MAINLAYER: { ...page.MAINLAYER, bitmapBuffer: retain('MAINLAYER') },
+		LAYER1: { ...page.LAYER1, bitmapBuffer: retain('LAYER1') },
+		LAYER2: { ...page.LAYER2, bitmapBuffer: retain('LAYER2') },
+		LAYER3: { ...page.LAYER3, bitmapBuffer: retain('LAYER3') },
 	};
 }
 
@@ -679,6 +758,8 @@ export function buildRenderNoteForVectorInk(note: ISupernote, vectorInkPages: Ve
 	const useVectorInkByPage = new Map(vectorInkPages.map((p) => [p.pageNumber, p.useVectorInk]));
 	return {
 		...note,
-		pages: note.pages.map((page, i) => (useVectorInkByPage.get(i + 1) ? withoutInkLayers(page) : page)),
+		pages: note.pages.map((page, i) =>
+			useVectorInkByPage.get(i + 1) ? withoutInkLayers(page, note.pageWidth, note.pageHeight) : page,
+		),
 	};
 }
