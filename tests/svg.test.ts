@@ -6,6 +6,7 @@ import { parseStrokes } from "../src/strokes"
 import { recognitionCoordinateScale } from "../src/pdf"
 import { toImage } from "../src/conversion"
 import { SupernoteX } from "../src/parsing"
+import { buildRasterInkOverlayNote, buildVectorInkBackgroundNote } from "../src/index"
 import { buildRenderNoteForVectorInk, parseDisabledInkRects, prepareVectorInkPages } from "../src/vector-ink"
 import { describe, test, expect } from 'vitest'
 
@@ -558,6 +559,18 @@ describe("svg", () => {
       // page's decoded grey highlighter rather than covering it with vector ink.
       expect(svg).toContain('data-raster-ink-overlay="true"')
       expect(svg.indexOf("<path ")).toBeLessThan(svg.indexOf('data-raster-ink-overlay="true"'))
+
+      // Worker renderers can use the public pair of render notes with
+      // addSvgPage(), rather than clearing all ink from a page slice and
+      // losing the text-box/Digest bitmap entirely.
+      const [background] = await toImage(buildVectorInkBackgroundNote(sn, vectorPages), [pageNumber])
+      const [rasterOverlay] = await toImage(buildRasterInkOverlayNote(sn, vectorPages), [pageNumber])
+      const workerSvg = addSvgPage(sn.pages[pageNumber - 1], background, sn.pageWidth, sn.pageHeight, {
+        strokes: vectorPages[0].strokes,
+        strokeStyles: vectorPages[0].styles,
+        overlayImage: rasterOverlay,
+      })
+      expect(workerSvg.indexOf("<path ")).toBeLessThan(workerSvg.indexOf('data-raster-ink-overlay="true"'))
     }, { timeout: 30000 })
 
     test("erase-n6-20230015-horizontal-1270.note now crosses the coverage threshold and vectorizes (issue #56)", { timeout: 30000 }, async () => {

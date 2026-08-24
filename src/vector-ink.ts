@@ -770,8 +770,11 @@ export function prepareVectorInkPages(
 	return result;
 }
 
-/** Builds a copy of `note` with ink layers removed for every page where
- * `prepareVectorInkPages` decided vector ink should replace the raster ink. */
+/** Builds a copy of `note` with vectorizable ink layers removed for every
+ * page where `prepareVectorInkPages` decided vector ink should replace the
+ * raster ink. `DISABLE` text-box/Digest regions remain in this legacy
+ * single-raster result; use `buildVectorInkBackgroundNote` together with
+ * `buildRasterInkOverlayNote` when vector paths must remain beneath them. */
 export function buildRenderNoteForVectorInk(note: ISupernote, vectorInkPages: VectorInkPage[]): ISupernote {
 	const useVectorInkByPage = new Map(vectorInkPages.map((p) => [p.pageNumber, p.useVectorInk]));
 	return {

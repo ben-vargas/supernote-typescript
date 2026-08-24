@@ -59,24 +59,26 @@ Note that only page rendering (`toImage`/`encodePng`) is parallelizable this way
 
 ```ts
 import {
-  SupernoteX, extractPdfPageData, prepareVectorInkPages, buildRenderNoteForVectorInk, createPdfContext, addPdfPage,
+  SupernoteX, extractPdfPageData, prepareVectorInkPages,
+  buildVectorInkBackgroundNote, buildRasterInkOverlayNote, createPdfContext, addPdfPage,
 } from 'supernote-typescript';
 
 const note = new SupernoteX(buffer);
 const pageNumbers = note.pages.map((_, i) => i + 1);
 const vectorInkPages = prepareVectorInkPages(note, pageNumbers, 1); // upscale 1: native resolution
 
-// buildRenderNoteForVectorInk() gives a copy of `note` with the bitmap ink
-// layers stripped from every page whose ink was replaced by vectors, so
-// the worker rasterizes only the background (BGLAYER) for those pages.
-const renderNote = buildRenderNoteForVectorInk(note, vectorInkPages);
+// Keep text boxes/Digests separate from the background. They are bitmap-only
+// ink, and must be painted after vector paths so a highlighter cannot cover
+// their glyphs.
+const backgroundNote = buildVectorInkBackgroundNote(note, vectorInkPages);
+const rasterOverlayNote = buildRasterInkOverlayNote(note, vectorInkPages);
 
 // Each page still goes through extractPdfPageData (or extractPageRenderData)
-// for the structured-clone-safe worker slice, but pulled from renderNote so
-// the ink layers are already gone where vectors replaced them.
-const pngBuffers = await Promise.all(
-  pageNumbers.map((n) => renderInWorker(extractPdfPageData(renderNote, n))),
-);
+// for the structured-clone-safe worker slice. Render both PNGs in the worker.
+const [pngBuffers, overlayPngBuffers] = await Promise.all([
+  Promise.all(pageNumbers.map((n) => renderInWorker(extractPdfPageData(backgroundNote, n)))),
+  Promise.all(pageNumbers.map((n) => renderInWorker(extractPdfPageData(rasterOverlayNote, n)))),
+]);
 
 const ctx = await createPdfContext();
 for (let i = 0; i < pageNumbers.length; i++) {
@@ -84,12 +86,13 @@ for (let i = 0; i < pageNumbers.length; i++) {
   await addPdfPage(ctx, note.pages[i], pngBuffers[i], {
     strokes: vip.useVectorInk ? vip.strokes : undefined,
     strokeStyles: vip.useVectorInk ? vip.styles : undefined,
+    overlayImage: vip.useVectorInk ? overlayPngBuffers[i] : undefined,
   });
 }
 const pdfBytes = await ctx.pdfDoc.save();
 ```
 
-`prepareVectorInkPages` decides, per page, whether the decoded strokes are trustworthy enough to replace the rasterized ink (it falls back to the raster for any page whose ink doesn't decode or decodes to nothing), so the only thing the caller does is pass the `strokes`/`strokeStyles` it produced through to `addPdfPage` for the pages where `useVectorInk` is true. Coordinates are in the same native page-pixel space as `toImage`'s raster at `upscale: 1`.
+`prepareVectorInkPages` decides, per page, whether the decoded strokes are trustworthy enough to replace the rasterized ink (it falls back to the raster for any page whose ink doesn't decode or decodes to nothing). The same background/overlay pair works with `addSvgPage`: pass the background PNG as `image`, vector `strokes`/`strokeStyles`, and the overlay PNG as `overlayImage`. Coordinates are in the same native page-pixel space as `toImage`'s raster at `upscale: 1`.
 
 ### Generating searchable SVGs
 
