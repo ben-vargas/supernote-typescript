@@ -241,6 +241,31 @@ export function parseDisabledInkRects(disable: string | undefined): RasterInkRec
 	});
 }
 
+/** Raster-only regions that must remain when page `pageNumber` is vectorized.
+ *
+ * `DISABLE` covers text boxes and Digest excerpts. A Digest's separately
+ * rendered PDF-link label sits immediately outside its `DISABLE` rectangle,
+ * but is likewise absent from `TOTALPATH`. Links with `FONTSIZE > 0` are
+ * those on-device typeset labels; ordinary link-tag rectangles use a zero
+ * font size and can enclose genuine vector handwriting, so must not be
+ * retained as a raster overlay. The first four characters of a `links` key
+ * are the 1-indexed source page number (see `_parseLinks`). */
+export function rasterInkRectsForPage(note: ISupernote, pageNumber: number): RasterInkRect[] {
+	const page = note.pages[pageNumber - 1];
+	if (!page) return [];
+	const linkRects = Object.entries(note.links).flatMap(([key, links]) => {
+		if (Number(key.slice(0, 4)) !== pageNumber) return [];
+		return links.flatMap((link) => {
+			if (!(Number(link.FONTSIZE) > 0)) return [];
+			const [x, y, width, height] = link.LINKRECT.split(',').map(Number);
+			return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+				? [{ x, y, width, height }]
+				: [];
+		});
+	});
+	return [...parseDisabledInkRects(page.DISABLE), ...linkRects];
+}
+
 function isInAnyRect(x: number, y: number, rects: RasterInkRect[]): boolean {
 	return rects.some((rect) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height);
 }
@@ -312,10 +337,11 @@ export function withoutInkLayers(
 	pageWidth: number,
 	pageHeight: number,
 	retainRasterInk = true,
+	rasterInkRects = parseDisabledInkRects(page.DISABLE),
 ): IPage {
-	const rasterInkRects = retainRasterInk ? parseDisabledInkRects(page.DISABLE) : [];
+	const retainedRects = retainRasterInk ? rasterInkRects : [];
 	const retain = (name: ILayerNames) =>
-		retainRasterInkInRects(page[name].bitmapBuffer, rasterInkRects, pageWidth, pageHeight);
+		retainRasterInkInRects(page[name].bitmapBuffer, retainedRects, pageWidth, pageHeight);
 	return {
 		...page,
 		MAINLAYER: { ...page.MAINLAYER, bitmapBuffer: retain('MAINLAYER') },
@@ -770,14 +796,19 @@ export function prepareVectorInkPages(
 	return result;
 }
 
-/** Builds a copy of `note` with ink layers removed for every page where
- * `prepareVectorInkPages` decided vector ink should replace the raster ink. */
+/** Builds a copy of `note` with vectorizable ink layers removed for every
+ * page where `prepareVectorInkPages` decided vector ink should replace the
+ * raster ink. `DISABLE` text-box/Digest regions remain in this legacy
+ * single-raster result; use `buildVectorInkBackgroundNote` together with
+ * `buildRasterInkOverlayNote` when vector paths must remain beneath them. */
 export function buildRenderNoteForVectorInk(note: ISupernote, vectorInkPages: VectorInkPage[]): ISupernote {
 	const useVectorInkByPage = new Map(vectorInkPages.map((p) => [p.pageNumber, p.useVectorInk]));
 	return {
 		...note,
 		pages: note.pages.map((page, i) =>
-			useVectorInkByPage.get(i + 1) ? withoutInkLayers(page, note.pageWidth, note.pageHeight) : page,
+			useVectorInkByPage.get(i + 1)
+				? withoutInkLayers(page, note.pageWidth, note.pageHeight, true, rasterInkRectsForPage(note, i + 1))
+				: page,
 		),
 	};
 }
@@ -812,8 +843,12 @@ export function buildRasterInkOverlayNote(note: ISupernote, vectorInkPages: Vect
 	return {
 		...note,
 		pages: note.pages.map((page, i) => {
-			if (!useVectorInkByPage.get(i + 1) || parseDisabledInkRects(page.DISABLE).length === 0) return clear(page);
-			return { ...withoutInkLayers(page, note.pageWidth, note.pageHeight), BGLAYER: { ...page.BGLAYER, bitmapBuffer: null } };
+			const rasterInkRects = rasterInkRectsForPage(note, i + 1);
+			if (!useVectorInkByPage.get(i + 1) || rasterInkRects.length === 0) return clear(page);
+			return {
+				...withoutInkLayers(page, note.pageWidth, note.pageHeight, true, rasterInkRects),
+				BGLAYER: { ...page.BGLAYER, bitmapBuffer: null },
+			};
 		}),
 	};
 }

@@ -4,9 +4,10 @@ import { encodePng } from "image-js"
 import { toSvg, addSvgPage } from "../src/svg"
 import { parseStrokes } from "../src/strokes"
 import { recognitionCoordinateScale } from "../src/pdf"
-import { toImage } from "../src/conversion"
+import { RattaRLEDecoder, toImage } from "../src/conversion"
 import { SupernoteX } from "../src/parsing"
-import { buildRenderNoteForVectorInk, parseDisabledInkRects, prepareVectorInkPages } from "../src/vector-ink"
+import { buildRasterInkOverlayNote, buildVectorInkBackgroundNote } from "../src/index"
+import { buildRenderNoteForVectorInk, parseDisabledInkRects, prepareVectorInkPages, rasterInkRectsForPage } from "../src/vector-ink"
 import { describe, test, expect } from 'vitest'
 
 function readFileToUint8Array(filePath: string): Promise<Uint8Array> {
@@ -558,6 +559,54 @@ describe("svg", () => {
       // page's decoded grey highlighter rather than covering it with vector ink.
       expect(svg).toContain('data-raster-ink-overlay="true"')
       expect(svg.indexOf("<path ")).toBeLessThan(svg.indexOf('data-raster-ink-overlay="true"'))
+
+      // Worker renderers can use the public pair of render notes with
+      // addSvgPage(), rather than clearing all ink from a page slice and
+      // losing the text-box/Digest bitmap entirely.
+      const [background] = await toImage(buildVectorInkBackgroundNote(sn, vectorPages), [pageNumber])
+      const [rasterOverlay] = await toImage(buildRasterInkOverlayNote(sn, vectorPages), [pageNumber])
+      const workerSvg = addSvgPage(sn.pages[pageNumber - 1], background, sn.pageWidth, sn.pageHeight, {
+        strokes: vectorPages[0].strokes,
+        strokeStyles: vectorPages[0].styles,
+        overlayImage: rasterOverlay,
+      })
+      expect(workerSvg.indexOf("<path ")).toBeLessThan(workerSvg.indexOf('data-raster-ink-overlay="true"'))
+    }, { timeout: 30000 })
+
+    test("keeps a typeset PDF-link label just outside a Digest DISABLE rectangle", { timeout: 30000 }, async () => {
+      const sn = new SupernoteX(await readFileToUint8Array("textbox-n5-20260016-digest.note"))
+      const pageNumber = 5
+      // The Digest ends at y=321; its typeset source-PDF label occupies the
+      // adjacent LINKRECT. It has no TOTALPATH strokes, so retaining only
+      // DISABLE would lose it when the ink layer is vectorized.
+      expect(rasterInkRectsForPage(sn, pageNumber)).toEqual([
+        { x: 126, y: 919, width: 1622, height: 174 },
+        { x: 84, y: 195, width: 1506, height: 126 },
+        { x: 913, y: 321, width: 759, height: 70 },
+      ])
+
+      const vectorPages = prepareVectorInkPages(sn, [pageNumber], 1)
+      const retainedPage = buildRenderNoteForVectorInk(sn, vectorPages).pages[pageNumber - 1]
+      const decoder = new RattaRLEDecoder()
+      const source = decoder.decode(sn.pages[pageNumber - 1].MAINLAYER.bitmapBuffer!, sn.pageWidth, sn.pageHeight)
+      const retained = decoder.decode(retainedPage.MAINLAYER.bitmapBuffer!, sn.pageWidth, sn.pageHeight)
+      let differingBytes = 0
+      for (let row = 321; row < 391; row++) {
+        for (let column = 913; column < 1672; column++) {
+          const offset = (row * sn.pageWidth + column) * 4
+          // Ratta's transparent-white and transparent-black palette entries
+          // are visually identical; compare only rendered label pixels.
+          if (source[offset + 3] || retained[offset + 3]) {
+            for (let channel = 0; channel < 4; channel++) {
+              differingBytes += Number(source[offset + channel] !== retained[offset + channel])
+            }
+          }
+        }
+      }
+      expect(differingBytes).toBe(0)
+
+      const [svg] = await toSvg(sn, { pageNumbers: [pageNumber], vectorInk: true })
+      expect(svg).toContain('data-raster-ink-overlay="true"')
     }, { timeout: 30000 })
 
     test("erase-n6-20230015-horizontal-1270.note now crosses the coverage threshold and vectorizes (issue #56)", { timeout: 30000 }, async () => {

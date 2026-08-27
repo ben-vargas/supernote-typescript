@@ -12,6 +12,9 @@ export interface ILink {
 	LINKBITMAP: string;
 	LINKSTYLE: string;
 	LINKTIMESTAMP: string;
+	/** Font size of an on-device typeset link label. Zero for ordinary
+	 * handwritten/link-tag links. */
+	FONTSIZE: string;
 	/** Link rectangle coordinates (x, y, w, h as a comma-separated string). */
 	LINKRECT: string;
 	LINKRECTORI: string;
