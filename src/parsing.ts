@@ -718,6 +718,7 @@ export class SupernoteX implements ISupernote {
 			LINKBITMAP: '0',
 			LINKSTYLE: '0',
 			LINKTIMESTAMP: '0',
+			FONTSIZE: '0',
 			LINKRECT: '0',
 			LINKRECTORI: '0',
 			LINKPROTOCAL: 'RATTA_RLE',

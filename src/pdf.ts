@@ -28,7 +28,7 @@ import {
 	prepareVectorInkPages,
 	buildVectorInkBackgroundNote,
 	buildRasterInkOverlayNote,
-	parseDisabledInkRects,
+	rasterInkRectsForPage,
 } from './vector-ink.js';
 
 // Recognized word bounding boxes are stored in raster-pixel units divided by
@@ -499,7 +499,7 @@ export async function toPdf(note: ISupernote, options: ToPdfOptions = {}): Promi
 			dpi,
 			strokes: vip?.useVectorInk ? vip.strokes : undefined,
 			strokeStyles: vip?.useVectorInk ? vip.styles : undefined,
-			overlayImage: vip?.useVectorInk && parseDisabledInkRects(pages[i].DISABLE).length ? overlayImages?.[i] : undefined,
+			overlayImage: vip?.useVectorInk && rasterInkRectsForPage(note, pageNumber).length ? overlayImages?.[i] : undefined,
 			equipment: note.header.APPLY_EQUIPMENT,
 			nativePageWidth: note.pageWidth,
 		});

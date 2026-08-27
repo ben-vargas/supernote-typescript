@@ -10,7 +10,7 @@ import {
 	prepareVectorInkPages,
 	buildVectorInkBackgroundNote,
 	buildRasterInkOverlayNote,
-	parseDisabledInkRects,
+	rasterInkRectsForPage,
 } from './vector-ink.js';
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -313,7 +313,7 @@ export async function toSvg(note: ISupernote, options: ToSvgOptions = {}): Promi
 			includeText,
 			strokes,
 			strokeStyles,
-			overlayImage: vip?.useVectorInk && parseDisabledInkRects(page.DISABLE).length ? overlayImages?.[i] : undefined,
+			overlayImage: vip?.useVectorInk && rasterInkRectsForPage(note, pageNumber).length ? overlayImages?.[i] : undefined,
 			equipment: note.header.APPLY_EQUIPMENT,
 			nativePageWidth: note.pageWidth,
 		});
